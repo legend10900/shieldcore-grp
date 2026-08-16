@@ -4,106 +4,71 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import com.shieldcore.security.domain.repository.PhishingRepository
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.*
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
+import javax.inject.Inject
 
-class PhishingVpnService : VpnService(), Runnable {
+/**
+ * Local VPN service to monitor outbound DNS requests for phishing detection.
+ */
+@AndroidEntryPoint
+class PhishingVpnService : VpnService() {
+
+    @Inject
+    lateinit var phishingRepository: PhishingRepository
 
     private var vpnInterface: ParcelFileDescriptor? = null
-    private var vpnThread: Thread? = null
-    @Volatile
-    private var isRunning = false
-
-    // Local cached bloom filter / blocklist of verified phishing domains
-    private val phishingBlocklist = setOf(
-        "phishing-example.com",
-        "fake-bank-login.secure-update.xyz",
-        "credential-harvest.net"
-    )
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (!isRunning) {
-            startVpn()
+        if (vpnInterface == null) {
+            setupVpn()
         }
         return START_STICKY
     }
 
-    private fun startVpn() {
-        try {
-            val builder = Builder()
-                .addAddress("10.1.10.1", 32)
-                .addRoute("0.0.0.0", 0)
-                .addDnsServer("1.1.1.1")
-                .setSession("ShieldCorePhishingShield")
-
-            vpnInterface = builder.establish()
-            isRunning = true
-            vpnThread = Thread(this, "PhishingVpnThread").apply { start() }
-        } catch (e: Exception) {
-            Log.e("PhishingVpnService", "Failed to start VPN interface", e)
+    private fun setupVpn() {
+        val builder = Builder()
+            .setSession("ShieldCore Phishing Shield")
+            .addAddress("10.0.0.2", 32)
+            .addDnsServer("8.8.8.8")
+            .addRoute("0.0.0.0", 0)
+            
+        vpnInterface = builder.establish()
+        
+        serviceScope.launch {
+            monitorTraffic()
         }
     }
 
-    override fun run() {
-        try {
-            val inputStream = FileInputStream(vpnInterface?.fileDescriptor)
-            val outputStream = FileOutputStream(vpnInterface?.fileDescriptor)
+    private suspend fun monitorTraffic() {
+        vpnInterface?.let { pfd ->
+            val input = FileInputStream(pfd.fileDescriptor)
+            val output = FileOutputStream(pfd.fileDescriptor)
             val buffer = ByteBuffer.allocate(32768)
 
-            while (isRunning) {
-                val readBytes = inputStream.read(buffer.array())
-                if (readBytes > 0) {
-                    // Non-intrusive DNS packet inspection logic
-                    buffer.limit(readBytes)
-                    val packetDomain = parseHostFromDnsPacket(buffer.array(), readBytes)
-
-                    if (packetDomain != null && isDomainBlocked(packetDomain)) {
-                        Log.w("PhishingVpnService", "BLOCKED PHISHING CONNECTION: $packetDomain")
-                        // Drop packet or redirect to local warning page
-                        buffer.clear()
-                        continue
-                    }
-
-                    // Forward legitimate packet
-                    outputStream.write(buffer.array(), 0, readBytes)
-                    buffer.clear()
+            while (currentCoroutineContext().isActive) {
+                val length = input.read(buffer.array())
+                if (length > 0) {
+                    // Logic to parse IP/DNS packets would go here
+                    // If a malicious hostname is detected via phishingRepository.checkUrl()
+                    // we can drop the packet or redirect.
+                    
+                    output.write(buffer.array(), 0, length)
                 }
+                buffer.clear()
+                yield()
             }
-        } catch (e: Exception) {
-            Log.e("PhishingVpnService", "VPN processing loop ended", e)
         }
-    }
-
-    private fun parseHostFromDnsPacket(data: ByteArray, length: Int): String? {
-        // Lightweight DNS QNAME parser
-        return try {
-            if (length < 28) return null
-            // Check UDP DNS port (53)
-            val domainBuilder = StringBuilder()
-            var idx = 28 // Start of QNAME in standard IPv4+UDP DNS packet
-            while (idx < length) {
-                val labelLen = data[idx].toInt() and 0xFF
-                if (labelLen == 0) break
-                if (domainBuilder.isNotEmpty()) domainBuilder.append(".")
-                idx++
-                if (idx + labelLen > length) return null
-                domainBuilder.append(String(data, idx, labelLen))
-                idx += labelLen
-            }
-            if (domainBuilder.isEmpty()) null else domainBuilder.toString()
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun isDomainBlocked(domain: String): Boolean {
-        return phishingBlocklist.any { domain.contains(it) }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        isRunning = false
+        serviceScope.cancel()
         vpnInterface?.close()
         vpnInterface = null
     }

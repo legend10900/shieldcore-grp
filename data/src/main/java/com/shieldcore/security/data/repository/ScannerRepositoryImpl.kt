@@ -62,8 +62,8 @@ class ScannerRepositoryImpl @Inject constructor(
     override suspend fun scanPackage(packageName: String): ScanResult = withContext(Dispatchers.IO) {
         try {
             val packageInfo = context.packageManager.getPackageInfo(packageName, 0)
-            val apkPath = packageInfo.applicationInfo.sourceDir
-            val label = packageInfo.applicationInfo.loadLabel(context.packageManager).toString()
+            val apkPath = packageInfo.applicationInfo?.sourceDir ?: ""
+            val label = packageInfo.applicationInfo?.loadLabel(context.packageManager)?.toString() ?: packageName
             
             scanFile(apkPath, emptyList()).copy(
                 label = label,

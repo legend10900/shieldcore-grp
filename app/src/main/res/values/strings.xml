@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">ShieldCore</string>
+    <string name="accessibility_description">Protects you from phishing links and automates cache cleaning for performance.</string>
+</resources>

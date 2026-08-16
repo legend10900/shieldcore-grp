@@ -25,21 +25,29 @@
     <application
         android:name=".ShieldCoreApp"
         android:allowBackup="false"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/ic_launcher_foreground"
         android:label="ShieldCore"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@drawable/ic_launcher_foreground"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.NoTitleBar">
+        android:theme="@style/AppTheme">
 
         <activity
             android:name=".presentation.ui.MainActivity"
             android:exported="true"
-            android:theme="@android:style/Theme.Material.NoTitleBar">
+            android:theme="@style/AppTheme">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".presentation.ui.AppLockActivity"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/AppTheme"
+            android:exported="false" />
 
         <!-- BroadcastReceiver for Real-Time Installer Scanner -->
         <receiver

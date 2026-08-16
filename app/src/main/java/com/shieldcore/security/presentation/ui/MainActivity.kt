@@ -11,13 +11,11 @@ import dagger.hilt.android.AndroidEntryPoint
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
-    private val antivirusViewModel: AntivirusViewModel by viewModels()
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                AntivirusScreen(viewModel = antivirusViewModel)
+                MainScreen()
             }
         }
     }

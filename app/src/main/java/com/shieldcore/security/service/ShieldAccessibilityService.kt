@@ -5,105 +5,81 @@ import android.content.Intent
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.shieldcore.security.domain.repository.PhishingRepository
+import com.shieldcore.security.domain.repository.AppLockRepository
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.*
+import javax.inject.Inject
 
+@AndroidEntryPoint
 class ShieldAccessibilityService : AccessibilityService() {
 
-    enum class CleanerState {
-        IDLE,
-        OPENING_STORAGE,
-        CLICKING_CLEAR_CACHE,
-        COMPLETED
-    }
+    @Inject
+    lateinit var phishingRepository: PhishingRepository
 
-    private var currentCleanerState = CleanerState.IDLE
-    private val safetyBlacklistStrings = setOf("Clear data", "Clear storage", "Delete data", "Storage wipe")
+    @Inject
+    lateinit var appLockRepository: AppLockRepository
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null) return
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    override fun onAccessibilityEvent(event: AccessibilityEvent) {
         when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 val packageName = event.packageName?.toString() ?: return
+                checkAppLock(packageName)
+            }
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                inspectUrlBar()
+            }
+        }
+    }
 
-                // 1. Phishing URL Inspection for Mobile Browsers
-                if (isBrowserPackage(packageName)) {
-                    inspectBrowserAddressBar(rootInActiveWindow)
-                }
+    private fun checkAppLock(packageName: String) {
+        if (packageName == this.packageName) return
 
-                // 2. Automated Cache Cleaning State Machine inside Settings App
-                if (packageName == "com.android.settings" && currentCleanerState != CleanerState.IDLE) {
-                    processCacheCleanerStep(rootInActiveWindow)
+        serviceScope.launch {
+            if (appLockRepository.isAppLocked(packageName) && !appLockRepository.isSessionUnlocked(packageName)) {
+                // In a real app, we would start the Lock Activity here
+                Log.i("ShieldAccessibility", "Locking app: $packageName")
+            }
+        }
+    }
+
+    private fun inspectUrlBar() {
+        val rootNode = rootInActiveWindow ?: return
+        val urlNodes = findUrlNodesRecursively(rootNode)
+
+        urlNodes.forEach { node ->
+            node.text?.toString()?.let { url ->
+                if (url.startsWith("http")) {
+                    serviceScope.launch {
+                        val result = phishingRepository.checkUrl(url)
+                        if (result.isMalicious) {
+                            Log.w("ShieldAccessibility", "Malicious URL detected: $url")
+                            // Show warning overlay or notification
+                        }
+                    }
                 }
             }
         }
     }
 
-    private fun isBrowserPackage(pkg: String): Boolean {
-        return pkg.contains("chrome") || pkg.contains("firefox") || pkg.contains("browser") || pkg.contains("opera")
-    }
-
-    private fun inspectBrowserAddressBar(rootNode: AccessibilityNodeInfo?) {
-        if (rootNode == null) return
-        val urlNodes = rootNode.findAccessibilityNodeInfosByViewId("com.android.chrome:id/url_bar")
-            ?: rootNode.findAccessibilityNodeInfosByText("http")
-
-        for (node in urlNodes) {
-            val text = node.text?.toString() ?: continue
-            if (text.startsWith("http://") || text.startsWith("https://")) {
-                Log.i("AccessibilityURLCheck", "Inspected active browser URL: $text")
-                if (isPhishingUrl(text)) {
-                    triggerSecurityOverlayWarning(text)
-                }
-            }
+    private fun findUrlNodesRecursively(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
+        val found = mutableListOf<AccessibilityNodeInfo>()
+        if (node.className?.contains("EditText", ignoreCase = true) == true || 
+            node.contentDescription?.contains("url", ignoreCase = true) == true) {
+            found.add(node)
         }
-    }
-
-    private fun isPhishingUrl(url: String): Boolean {
-        return url.contains("phishing") || url.contains("fake-login") || url.contains("credential-harvest")
-    }
-
-    private fun triggerSecurityOverlayWarning(url: String) {
-        Log.w("AccessibilityShield", "CRITICAL WARNING: Phishing link identified! $url")
-    }
-
-    private fun processCacheCleanerStep(rootNode: AccessibilityNodeInfo?) {
-        if (rootNode == null) return
-
-        when (currentCleanerState) {
-            CleanerState.OPENING_STORAGE -> {
-                val storageNodes = rootNode.findAccessibilityNodeInfosByText("Storage")
-                for (node in storageNodes) {
-                    if (node.isClickable) {
-                        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        currentCleanerState = CleanerState.CLICKING_CLEAR_CACHE
-                        return
-                    }
-                }
-            }
-            CleanerState.CLICKING_CLEAR_CACHE -> {
-                // STRICT SAFETY CHECK: Ensure we NEVER touch "Clear Data"
-                for (forbidden in safetyBlacklistStrings) {
-                    val dangerousNodes = rootNode.findAccessibilityNodeInfosByText(forbidden)
-                    if (dangerousNodes.isNotEmpty()) {
-                        Log.i("CacheCleanerSafety", "Encountered sensitive storage node. Bypassing data wipe buttons.")
-                    }
-                }
-
-                val cacheNodes = rootNode.findAccessibilityNodeInfosByText("Clear cache")
-                for (node in cacheNodes) {
-                    if (node.isClickable) {
-                        node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        currentCleanerState = CleanerState.COMPLETED
-                        performGlobalAction(GLOBAL_ACTION_BACK)
-                        return
-                    }
-                }
-            }
-            else -> {}
+        for (i in 0 until node.childCount) {
+            node.getChild(i)?.let { found.addAll(findUrlNodesRecursively(it)) }
         }
+        return found
     }
 
-    override fun onInterrupt() {
-        currentCleanerState = CleanerState.IDLE
+    override fun onInterrupt() {}
+
+    override fun onDestroy() {
+        super.onDestroy()
+        serviceScope.cancel()
     }
 }

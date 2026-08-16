@@ -22,6 +22,18 @@ class ShieldCoreApp : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
         scheduleBackgroundScan()
+        startRealtimeProtection()
+    }
+
+    private fun startRealtimeProtection() {
+        try {
+            val intent = android.content.Intent(this, com.shieldcore.security.service.RealtimeShieldService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (_: Exception) {}
     }
 
     private fun scheduleBackgroundScan() {

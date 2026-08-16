@@ -22,6 +22,19 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    private var lastCheckedPkg: String? = null
+    private var lastCheckTime: Long = 0L
+
+    private val ignoredPackages = setOf(
+        "com.android.systemui",
+        "com.google.android.inputmethod.latin",
+        "com.samsung.android.honeyboard",
+        "com.sec.android.inputmethod",
+        "com.android.launcher",
+        "com.google.android.apps.nexuslauncher",
+        "com.sec.android.app.launcher"
+    )
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
@@ -35,14 +48,18 @@ class ShieldAccessibilityService : AccessibilityService() {
     }
 
     private fun checkAppLock(packageName: String) {
-        if (packageName == this.packageName || packageName == "com.android.systemui") return
+        if (packageName == this.packageName || ignoredPackages.contains(packageName)) return
+        val now = System.currentTimeMillis()
+        if (packageName == lastCheckedPkg && now - lastCheckTime < 800) return
+        lastCheckedPkg = packageName
+        lastCheckTime = now
 
         serviceScope.launch {
             if (appLockRepository.isAppLocked(packageName) && !appLockRepository.isSessionUnlocked(packageName)) {
-                Log.i("ShieldAccessibility", "Locking app: $packageName")
+                Log.i("ShieldAccessibility", "Triggering AppLock for: $packageName")
                 val lockIntent = Intent(applicationContext, com.shieldcore.security.presentation.ui.AppLockActivity::class.java).apply {
                     putExtra("target_package", packageName)
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION
                 }
                 startActivity(lockIntent)
             }

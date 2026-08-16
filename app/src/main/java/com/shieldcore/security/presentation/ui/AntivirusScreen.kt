@@ -27,16 +27,64 @@ import com.shieldcore.security.presentation.viewmodel.AntivirusUiEvent
 @Composable
 fun AntivirusScreen(viewModel: AntivirusViewModel = androidx.hilt.navigation.compose.hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    var showApiKeyDialog by remember { mutableStateOf(false) }
+    val prefs = remember { context.getSharedPreferences("shieldcore_security_prefs", android.content.Context.MODE_PRIVATE) }
+    var apiKeyText by remember { mutableStateOf(prefs.getString("virustotal_api_key", "") ?: "") }
 
     val darkBackground = Color(0xFF0F172A)
     val accentGreen = Color(0xFF10B981)
     val threatRed = Color(0xFFEF4444)
     val cardBackground = Color(0xFF1E293B)
 
+    if (showApiKeyDialog) {
+        AlertDialog(
+            onDismissRequest = { showApiKeyDialog = false },
+            title = { Text("VirusTotal Cloud API", fontWeight = FontWeight.Bold) },
+            text = {
+                Column {
+                    Text(
+                        "Enter your VirusTotal API Key to enable live cloud multi-engine scanning across 70+ antivirus databases for every file.",
+                        fontSize = 13.sp,
+                        color = Color.LightGray
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = apiKeyText,
+                        onValueChange = { apiKeyText = it },
+                        label = { Text("VirusTotal API Key") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    prefs.edit().putString("virustotal_api_key", apiKeyText.trim()).apply()
+                    showApiKeyDialog = false
+                    android.widget.Toast.makeText(context, "VirusTotal API Key Saved", android.widget.Toast.LENGTH_SHORT).show()
+                }) {
+                    Text("Save Key")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showApiKeyDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("ShieldCore • Antivirus Engine", fontWeight = FontWeight.Bold, color = Color.White) },
+                actions = {
+                    IconButton(onClick = { showApiKeyDialog = true }) {
+                        Icon(Icons.Default.VpnKey, contentDescription = "VirusTotal API Key", tint = Color(0xFF60A5FA))
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = darkBackground)
             )
         },
@@ -53,7 +101,7 @@ fun AntivirusScreen(viewModel: AntivirusViewModel = androidx.hilt.navigation.com
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(240.dp)
+                    .height(210.dp)
                     .background(
                         brush = Brush.verticalGradient(
                             colors = listOf(Color(0xFF1E293B), Color(0xFF0F172A))
@@ -76,7 +124,7 @@ fun AntivirusScreen(viewModel: AntivirusViewModel = androidx.hilt.navigation.com
 
                     Box(
                         modifier = Modifier
-                            .size(140.dp)
+                            .size(130.dp)
                             .rotate(angle)
                             .background(
                                 brush = Brush.sweepGradient(
@@ -92,13 +140,13 @@ fun AntivirusScreen(viewModel: AntivirusViewModel = androidx.hilt.navigation.com
                         imageVector = if (uiState.detectedThreats.isNotEmpty()) Icons.Default.Warning else Icons.Default.Shield,
                         contentDescription = "Security Shield",
                         tint = if (uiState.detectedThreats.isNotEmpty()) threatRed else accentGreen,
-                        modifier = Modifier.size(64.dp)
+                        modifier = Modifier.size(56.dp)
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = if (uiState.isScanning) "Scanning Installed Packages..." else if (uiState.detectedThreats.isNotEmpty()) "Threats Detected!" else "System Protected",
                         color = Color.White,
-                        fontSize = 18.sp,
+                        fontSize = 17.sp,
                         fontWeight = FontWeight.Bold
                     )
                     if (uiState.isScanning) {
@@ -112,7 +160,34 @@ fun AntivirusScreen(viewModel: AntivirusViewModel = androidx.hilt.navigation.com
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Real-time Protection Banner
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = cardBackground),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = accentGreen, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Real-Time Protection Active", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (apiKeyText.isNotBlank()) "VirusTotal Cloud & Native JNI Monitoring" else "Native JNI Engine (Tap key icon for VirusTotal)",
+                            color = Color.Gray,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Action Button
             Button(
@@ -120,7 +195,7 @@ fun AntivirusScreen(viewModel: AntivirusViewModel = androidx.hilt.navigation.com
                 enabled = !uiState.isScanning,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(50.dp),
+                    .height(48.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF2563EB),
@@ -129,7 +204,7 @@ fun AntivirusScreen(viewModel: AntivirusViewModel = androidx.hilt.navigation.com
             ) {
                 Text(
                     text = if (uiState.isScanning) "Scanning Device..." else "Run Whole Device Scan",
-                    fontSize = 16.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = Color.White
                 )

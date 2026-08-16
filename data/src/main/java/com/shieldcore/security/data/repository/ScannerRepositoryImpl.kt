@@ -43,8 +43,21 @@ class ScannerRepositoryImpl @Inject constructor(
         }
 
         val hash = nativeScanner.computeFileHash(filePath)
+        val sha256 = computeSha256(file)
         val patterns = (signatures.map { it.pattern } + staticThreatRules.keys).toTypedArray()
-        val hasMaliciousPattern = nativeScanner.scanBinarySignatures(filePath, patterns)
+        var hasMaliciousPattern = nativeScanner.scanBinarySignatures(filePath, patterns)
+        var threatName: String? = if (hasMaliciousPattern) "Malware.NativeMatch" else null
+
+        // Check VirusTotal API v3 if API key configured
+        val prefs = context.getSharedPreferences("shieldcore_security_prefs", Context.MODE_PRIVATE)
+        val vtApiKey = prefs.getString("virustotal_api_key", null)
+        if (!vtApiKey.isNullOrBlank() && sha256 != null) {
+            val (isVtMalicious, vtLabel) = checkVirusTotal(sha256, vtApiKey)
+            if (isVtMalicious) {
+                hasMaliciousPattern = true
+                threatName = vtLabel ?: "VirusTotal.Malware.CloudMatch"
+            }
+        }
 
         val riskLevel = if (hasMaliciousPattern) RiskLevel.MALICIOUS else RiskLevel.SAFE
 
@@ -54,9 +67,53 @@ class ScannerRepositoryImpl @Inject constructor(
             packageName = null,
             filePath = filePath,
             riskLevel = riskLevel,
-            hash = hash,
-            threatName = if (hasMaliciousPattern) "Malware.NativeMatch" else null
+            hash = sha256 ?: hash,
+            threatName = threatName
         )
+    }
+
+    private fun computeSha256(file: File): String? {
+        return try {
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { stream ->
+                val buffer = ByteArray(8192)
+                var bytesRead: Int
+                while (stream.read(buffer).also { bytesRead = it } != -1) {
+                    md.update(buffer, 0, bytesRead)
+                }
+            }
+            md.digest().joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun checkVirusTotal(sha256: String, apiKey: String): Pair<Boolean, String?> = withContext(Dispatchers.IO) {
+        try {
+            val url = java.net.URL("https://www.virustotal.com/api/v3/files/$sha256")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("x-apikey", apiKey.trim())
+            conn.setRequestProperty("Accept", "application/json")
+            conn.connectTimeout = 3500
+            conn.readTimeout = 3500
+
+            if (conn.responseCode == 200) {
+                val json = conn.inputStream.bufferedReader().use { it.readText() }
+                val root = org.json.JSONObject(json)
+                val data = root.optJSONObject("data")
+                val attributes = data?.optJSONObject("attributes")
+                val stats = attributes?.optJSONObject("last_analysis_stats")
+                val malicious = stats?.optInt("malicious", 0) ?: 0
+                val suspicious = stats?.optInt("suspicious", 0) ?: 0
+                val threatLabel = attributes?.optJSONObject("popular_threat_classification")?.optString("suggested_threat_label", "VirusTotal.Malware")
+
+                if (malicious + suspicious > 0) {
+                    return@withContext Pair(true, "$threatLabel ($malicious engines flagged)")
+                }
+            }
+        } catch (_: Exception) {}
+        Pair(false, null)
     }
 
     override suspend fun scanPackage(packageName: String): ScanResult = withContext(Dispatchers.IO) {

@@ -46,6 +46,7 @@
 
         <activity
             android:name=".presentation.ui.AppLockActivity"
+            android:taskAffinity=""
             android:excludeFromRecents="true"
             android:noHistory="true"
             android:launchMode="singleTop"

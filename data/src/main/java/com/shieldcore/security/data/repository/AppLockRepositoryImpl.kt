@@ -53,10 +53,26 @@ class AppLockRepositoryImpl @Inject constructor(
     }
 
     override fun markSessionUnlocked(packageName: String) {
-        sessionUnlockedApps.add(packageName)
+        synchronized(sessionUnlockedApps) {
+            sessionUnlockedApps.add(packageName)
+        }
     }
 
     override fun isSessionUnlocked(packageName: String): Boolean {
-        return sessionUnlockedApps.contains(packageName)
+        return synchronized(sessionUnlockedApps) {
+            sessionUnlockedApps.contains(packageName)
+        }
+    }
+
+    override fun clearSessionUnlock(packageName: String) {
+        synchronized(sessionUnlockedApps) {
+            sessionUnlockedApps.remove(packageName)
+        }
+    }
+
+    override fun clearAllSessions() {
+        synchronized(sessionUnlockedApps) {
+            sessionUnlockedApps.clear()
+        }
     }
 }

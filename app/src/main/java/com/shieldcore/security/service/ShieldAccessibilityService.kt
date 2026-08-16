@@ -22,6 +22,7 @@ class ShieldAccessibilityService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    private var lastActiveLockedPkg: String? = null
     private var lastCheckedPkg: String? = null
     private var lastCheckTime: Long = 0L
 
@@ -48,20 +49,34 @@ class ShieldAccessibilityService : AccessibilityService() {
     }
 
     private fun checkAppLock(packageName: String) {
-        if (packageName == this.packageName || ignoredPackages.contains(packageName)) return
+        if (packageName == this.packageName) return
+
+        // When switching away from a previously active locked app, immediately clear its session unlock!
+        val prev = lastActiveLockedPkg
+        if (prev != null && prev != packageName && !ignoredPackages.contains(packageName)) {
+            appLockRepository.clearSessionUnlock(prev)
+            lastActiveLockedPkg = null
+        }
+
+        if (ignoredPackages.contains(packageName)) return
+
         val now = System.currentTimeMillis()
-        if (packageName == lastCheckedPkg && now - lastCheckTime < 800) return
+        if (packageName == lastCheckedPkg && now - lastCheckTime < 500) return
         lastCheckedPkg = packageName
         lastCheckTime = now
 
         serviceScope.launch {
-            if (appLockRepository.isAppLocked(packageName) && !appLockRepository.isSessionUnlocked(packageName)) {
-                Log.i("ShieldAccessibility", "Triggering AppLock for: $packageName")
-                val lockIntent = Intent(applicationContext, com.shieldcore.security.presentation.ui.AppLockActivity::class.java).apply {
-                    putExtra("target_package", packageName)
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION
+            if (appLockRepository.isAppLocked(packageName)) {
+                if (!appLockRepository.isSessionUnlocked(packageName)) {
+                    Log.i("ShieldAccessibility", "Triggering AppLock for: $packageName")
+                    val lockIntent = Intent(applicationContext, com.shieldcore.security.presentation.ui.AppLockActivity::class.java).apply {
+                        putExtra("target_package", packageName)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_NO_ANIMATION
+                    }
+                    startActivity(lockIntent)
+                } else {
+                    lastActiveLockedPkg = packageName
                 }
-                startActivity(lockIntent)
             }
         }
     }

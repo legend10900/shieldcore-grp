@@ -160,7 +160,8 @@ class ScannerRepositoryImpl @Inject constructor(
             totalFilesScanned = totalCount,
             threatsFound = detectedThreats.size,
             startTime = startTime,
-            endTime = System.currentTimeMillis()
+            endTime = System.currentTimeMillis(),
+            detectedThreats = detectedThreats.toList()
         )
         
         scanDao.insertScanReport(ScanReportEntity(
@@ -169,7 +170,7 @@ class ScannerRepositoryImpl @Inject constructor(
             threatCount = summary.threatsFound,
             durationMs = summary.endTime - summary.startTime,
             isClean = detectedThreats.isEmpty(),
-            threatsJson = "[]" 
+            threatsJson = serializeThreats(detectedThreats)
         ))
 
         emit(ScanProgress.Completed(summary, detectedThreats.toList()))
@@ -179,25 +180,89 @@ class ScannerRepositoryImpl @Inject constructor(
         return scanDao.getAllScanReports().map { entities ->
             entities.map { entity ->
                 ScanSummary(
+                    id = entity.id,
                     totalFilesScanned = entity.totalAppsScanned,
                     threatsFound = entity.threatCount,
                     startTime = entity.timestamp - entity.durationMs,
-                    endTime = entity.timestamp
+                    endTime = entity.timestamp,
+                    status = ScanStatus.COMPLETED,
+                    detectedThreats = deserializeThreats(entity.threatsJson)
                 )
             }
         }
     }
 
     override suspend fun removeThreat(packageName: String): Boolean = withContext(Dispatchers.Main) {
+        if (packageName.isBlank()) return@withContext false
         try {
-            val intent = android.content.Intent(android.content.Intent.ACTION_DELETE).apply {
+            // First attempt: standard system package uninstaller
+            val uninstallIntent = android.content.Intent(android.content.Intent.ACTION_DELETE).apply {
                 data = android.net.Uri.parse("package:$packageName")
                 flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
             }
-            context.startActivity(intent)
+            context.startActivity(uninstallIntent)
             true
-        } catch (e: Exception) {
-            false
+        } catch (e1: Exception) {
+            try {
+                // Secondary fallback: ACTION_UNINSTALL_PACKAGE
+                @Suppress("DEPRECATION")
+                val fallbackIntent = android.content.Intent(android.content.Intent.ACTION_UNINSTALL_PACKAGE).apply {
+                    data = android.net.Uri.parse("package:$packageName")
+                    putExtra(android.content.Intent.EXTRA_RETURN_RESULT, true)
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(fallbackIntent)
+                true
+            } catch (e2: Exception) {
+                // If it's a file path rather than an installed package name, delete the file directly
+                val targetFile = File(packageName)
+                if (targetFile.exists()) {
+                    targetFile.delete()
+                } else {
+                    false
+                }
+            }
         }
+    }
+
+    private fun serializeThreats(threats: List<ScanResult>): String {
+        val array = org.json.JSONArray()
+        for (t in threats) {
+            val obj = org.json.JSONObject()
+            obj.put("id", t.id)
+            obj.put("label", t.label)
+            obj.put("packageName", t.packageName ?: "")
+            obj.put("filePath", t.filePath)
+            obj.put("riskLevel", t.riskLevel.name)
+            obj.put("threatName", t.threatName ?: "")
+            obj.put("hash", t.hash ?: "")
+            obj.put("scanTime", t.scanTime)
+            array.put(obj)
+        }
+        return array.toString()
+    }
+
+    private fun deserializeThreats(json: String?): List<ScanResult> {
+        if (json.isNullOrBlank() || json == "[]") return emptyList()
+        val list = mutableListOf<ScanResult>()
+        try {
+            val array = org.json.JSONArray(json)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    ScanResult(
+                        id = obj.optString("id", UUID.randomUUID().toString()),
+                        label = obj.optString("label", "Threat"),
+                        packageName = obj.optString("packageName").takeIf { it.isNotBlank() },
+                        filePath = obj.optString("filePath", ""),
+                        riskLevel = try { RiskLevel.valueOf(obj.optString("riskLevel", "MALICIOUS")) } catch (_: Exception) { RiskLevel.MALICIOUS },
+                        threatName = obj.optString("threatName").takeIf { it.isNotBlank() },
+                        hash = obj.optString("hash").takeIf { it.isNotBlank() },
+                        scanTime = obj.optLong("scanTime", System.currentTimeMillis())
+                    )
+                )
+            }
+        } catch (_: Exception) {}
+        return list
     }
 }

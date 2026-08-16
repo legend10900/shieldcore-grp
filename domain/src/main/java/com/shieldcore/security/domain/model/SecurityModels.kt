@@ -40,11 +40,13 @@ data class SecuritySignature(
  * Summary of a full device scan.
  */
 data class ScanSummary(
+    val id: Long = 0,
     val totalFilesScanned: Int,
     val threatsFound: Int,
     val startTime: Long,
     val endTime: Long,
-    val status: ScanStatus = ScanStatus.COMPLETED
+    val status: ScanStatus = ScanStatus.COMPLETED,
+    val detectedThreats: List<ScanResult> = emptyList()
 )
 
 enum class ScanStatus {

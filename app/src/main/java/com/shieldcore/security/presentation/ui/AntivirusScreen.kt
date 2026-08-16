@@ -2,6 +2,7 @@ package com.shieldcore.security.presentation.ui
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -30,6 +31,7 @@ fun AntivirusScreen(viewModel: AntivirusViewModel = androidx.hilt.navigation.com
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var showApiKeyDialog by remember { mutableStateOf(false) }
+    var showHistoryDialog by remember { mutableStateOf(false) }
     val prefs = remember { context.getSharedPreferences("shieldcore_security_prefs", android.content.Context.MODE_PRIVATE) }
     var apiKeyText by remember { mutableStateOf(prefs.getString("virustotal_api_key", "") ?: "") }
 
@@ -37,6 +39,112 @@ fun AntivirusScreen(viewModel: AntivirusViewModel = androidx.hilt.navigation.com
     val accentGreen = Color(0xFF10B981)
     val threatRed = Color(0xFFEF4444)
     val cardBackground = Color(0xFF1E293B)
+
+    if (showHistoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showHistoryDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.History, contentDescription = null, tint = Color(0xFF60A5FA))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Past Scan Reports (${uiState.scanHistory.size})", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+            },
+            text = {
+                if (uiState.scanHistory.isEmpty()) {
+                    Text("No past scan reports recorded yet.", color = Color.Gray)
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(uiState.scanHistory) { report ->
+                            var isExpanded by remember { mutableStateOf(false) }
+                            val sdf = java.text.SimpleDateFormat("MMM dd, yyyy HH:mm:ss", java.util.Locale.getDefault())
+                            val dateStr = sdf.format(java.util.Date(report.endTime))
+                            val durationSec = String.format(java.util.Locale.US, "%.1fs", (report.endTime - report.startTime) / 1000f)
+
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { isExpanded = !isExpanded },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (report.threatsFound > 0)
+                                        Color(0xFF3B1E22)
+                                    else
+                                        Color(0xFF1E293B)
+                                ),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = if (report.threatsFound > 0) Icons.Default.Warning else Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = if (report.threatsFound > 0) threatRed else accentGreen,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(dateStr, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White)
+                                        Spacer(modifier = Modifier.weight(1f))
+                                        Text(
+                                            if (report.threatsFound > 0) "${report.threatsFound} Threat(s)" else "Clean",
+                                            color = if (report.threatsFound > 0) threatRed else accentGreen,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        "Scanned ${report.totalFilesScanned} apps • Duration: $durationSec",
+                                        fontSize = 11.sp,
+                                        color = Color.LightGray
+                                    )
+
+                                    if (isExpanded && report.detectedThreats.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Divider(color = Color.DarkGray)
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Text("Threats in this scan:", fontSize = 11.sp, color = threatRed, fontWeight = FontWeight.Bold)
+                                        report.detectedThreats.forEach { threat ->
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(threat.label, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                                    Text(threat.packageName ?: threat.filePath, fontSize = 10.sp, color = Color.Gray)
+                                                }
+                                                Button(
+                                                    onClick = {
+                                                        threat.packageName?.let { viewModel.removeThreat(it) }
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(containerColor = threatRed),
+                                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    modifier = Modifier.height(30.dp)
+                                                ) {
+                                                    Text("Uninstall", fontSize = 10.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showHistoryDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
 
     if (showApiKeyDialog) {
         AlertDialog(
@@ -79,8 +187,11 @@ fun AntivirusScreen(viewModel: AntivirusViewModel = androidx.hilt.navigation.com
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("ShieldCore • Antivirus Engine", fontWeight = FontWeight.Bold, color = Color.White) },
+                title = { Text("ShieldCore • Antivirus", fontWeight = FontWeight.Bold, color = Color.White) },
                 actions = {
+                    IconButton(onClick = { showHistoryDialog = true }) {
+                        Icon(Icons.Default.History, contentDescription = "Past Scans", tint = Color(0xFF60A5FA))
+                    }
                     IconButton(onClick = { showApiKeyDialog = true }) {
                         Icon(Icons.Default.VpnKey, contentDescription = "VirusTotal API Key", tint = Color(0xFF60A5FA))
                     }

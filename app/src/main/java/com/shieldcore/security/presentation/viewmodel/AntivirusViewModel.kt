@@ -104,7 +104,13 @@ class AntivirusViewModel @Inject constructor(
 
     fun removeThreat(packageName: String) {
         viewModelScope.launch {
-            scannerRepository.removeThreat(packageName)
+            val success = scannerRepository.removeThreat(packageName)
+            if (success) {
+                updateState {
+                    copy(detectedThreats = detectedThreats.filter { it.packageName != packageName && it.filePath != packageName })
+                }
+                sendEffect(AntivirusUiEffect.ShowToast("Uninstall prompted for: $packageName"))
+            }
         }
     }
 }

@@ -2,8 +2,8 @@ package com.shieldcore.security.presentation.ui
 
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.drawable.Drawable
 import android.os.Bundle
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
@@ -22,11 +22,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import com.shieldcore.security.core.utils.AppLockSecurityManager
 import com.shieldcore.security.domain.repository.AppLockRepository
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -42,6 +44,9 @@ class AppLockActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Prevent screenshots, screen recording, and Recent Apps snapshot leaks
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+
         targetPackage = intent.getStringExtra("target_package") ?: ""
 
         appLabel = try {
@@ -122,9 +127,11 @@ fun AppLockScreenContent(
     onPinSuccess: () -> Unit,
     onCancelClick: () -> Unit
 ) {
+    val context = LocalContext.current
+    val securityManager = remember { AppLockSecurityManager(context.applicationContext) }
+
     var enteredPin by remember { mutableStateOf("") }
     var isPinError by remember { mutableStateOf(false) }
-    val correctPin = "1234" // Default PIN
 
     val darkBg = Color(0xFF0F172A)
     val cardBg = Color(0xFF1E293B)
@@ -222,7 +229,7 @@ fun AppLockScreenContent(
                                                 val nextPin = enteredPin + key
                                                 enteredPin = nextPin
                                                 if (nextPin.length == 4) {
-                                                    if (nextPin == correctPin || nextPin == "0000") {
+                                                    if (securityManager.verifyPin(nextPin)) {
                                                         onPinSuccess()
                                                     } else {
                                                         isPinError = true

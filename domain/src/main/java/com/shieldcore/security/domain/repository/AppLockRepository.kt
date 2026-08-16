@@ -28,4 +28,14 @@ interface AppLockRepository {
      * Checks if the app has a valid unlock session.
      */
     fun isSessionUnlocked(packageName: String): Boolean
+
+    /**
+     * Clears the unlock session for a specific package when user exits or switches apps.
+     */
+    fun clearSessionUnlock(packageName: String)
+
+    /**
+     * Clears all temporary unlock sessions.
+     */
+    fun clearAllSessions()
 }

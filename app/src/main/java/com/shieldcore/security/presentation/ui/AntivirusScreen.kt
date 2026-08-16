@@ -25,7 +25,7 @@ import com.shieldcore.security.presentation.viewmodel.AntivirusUiEvent
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AntivirusScreen(viewModel: AntivirusViewModel) {
+fun AntivirusScreen(viewModel: AntivirusViewModel = androidx.hilt.navigation.compose.hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
 
     val darkBackground = Color(0xFF0F172A)
@@ -171,7 +171,12 @@ fun AntivirusScreen(viewModel: AntivirusViewModel) {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(uiState.detectedThreats) { threat ->
-                        ThreatItemCard(threat = threat, cardBackground = cardBackground, threatRed = threatRed)
+                        ThreatItemCard(
+                            threat = threat,
+                            cardBackground = cardBackground,
+                            threatRed = threatRed,
+                            onUninstall = { threat.packageName?.let { pkg -> viewModel.removeThreat(pkg) } }
+                        )
                     }
                 }
             }
@@ -180,7 +185,12 @@ fun AntivirusScreen(viewModel: AntivirusViewModel) {
 }
 
 @Composable
-fun ThreatItemCard(threat: ScanResult, cardBackground: Color, threatRed: Color) {
+fun ThreatItemCard(
+    threat: ScanResult,
+    cardBackground: Color,
+    threatRed: Color,
+    onUninstall: () -> Unit
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = cardBackground),
@@ -203,6 +213,18 @@ fun ThreatItemCard(threat: ScanResult, cardBackground: Color, threatRed: Color) 
             Text("Package: ${threat.packageName}", color = Color.Gray, fontSize = 12.sp)
             Text("Threat Rule: ${threat.threatName ?: "Unknown"}", color = Color.LightGray, fontSize = 13.sp)
             Text("Hash: ${threat.hash ?: "N/A"}", color = Color(0xFF60A5FA), fontSize = 11.sp)
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Button(
+                onClick = onUninstall,
+                colors = ButtonDefaults.buttonColors(containerColor = threatRed),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.align(Alignment.End)
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Uninstall / Remove")
+            }
         }
     }
 }

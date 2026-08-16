@@ -9,6 +9,8 @@ import com.shieldcore.security.domain.repository.JunkScanProgress
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -18,25 +20,53 @@ class CleanerViewModel @Inject constructor(
 ) : ViewModel() {
 
     private val _scanProgress = MutableStateFlow<JunkScanProgress>(JunkScanProgress.Idle)
-    val scanProgress: StateFlow<JunkScanProgress> = _scanProgress
+    val scanProgress: StateFlow<JunkScanProgress> = _scanProgress.asStateFlow()
 
     private val _cleanSummary = MutableStateFlow<CleanSummary?>(null)
-    val cleanSummary: StateFlow<CleanSummary?> = _cleanSummary
+    val cleanSummary: StateFlow<CleanSummary?> = _cleanSummary.asStateFlow()
+
+    private val _selectedIds = MutableStateFlow<Set<String>>(emptySet())
+    val selectedIds: StateFlow<Set<String>> = _selectedIds.asStateFlow()
 
     fun startScan() {
         viewModelScope.launch {
-            repository.scanForJunk().collect {
-                _scanProgress.value = it
+            _selectedIds.value = emptySet()
+            _cleanSummary.value = null
+            repository.scanForJunk().collect { progress ->
+                _scanProgress.value = progress
+                if (progress is JunkScanProgress.Completed) {
+                    _selectedIds.value = progress.items.map { it.id }.toSet()
+                }
             }
         }
     }
 
-    fun cleanSelected(items: List<JunkItem>) {
-        viewModelScope.launch {
-            val summary = repository.cleanJunk(items)
-            _cleanSummary.value = summary
-            // Refresh scan after cleaning
-            startScan()
+    fun toggleItemSelection(id: String) {
+        _selectedIds.update { current ->
+            if (current.contains(id)) current - id else current + id
         }
+    }
+
+    fun selectAll(items: List<JunkItem>) {
+        _selectedIds.value = items.map { it.id }.toSet()
+    }
+
+    fun deselectAll() {
+        _selectedIds.value = emptySet()
+    }
+
+    fun cleanSelected(items: List<JunkItem>) {
+        val toClean = items.filter { _selectedIds.value.contains(it.id) }
+        if (toClean.isEmpty()) return
+
+        viewModelScope.launch {
+            val summary = repository.cleanJunk(toClean)
+            _cleanSummary.value = summary
+        }
+    }
+
+    fun dismissSummary() {
+        _cleanSummary.value = null
+        startScan()
     }
 }

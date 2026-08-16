@@ -101,4 +101,10 @@ class AntivirusViewModel @Inject constructor(
             }
         }
     }
+
+    fun removeThreat(packageName: String) {
+        viewModelScope.launch {
+            scannerRepository.removeThreat(packageName)
+        }
+    }
 }

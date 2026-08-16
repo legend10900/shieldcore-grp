@@ -35,12 +35,16 @@ class ShieldAccessibilityService : AccessibilityService() {
     }
 
     private fun checkAppLock(packageName: String) {
-        if (packageName == this.packageName) return
+        if (packageName == this.packageName || packageName == "com.android.systemui") return
 
         serviceScope.launch {
             if (appLockRepository.isAppLocked(packageName) && !appLockRepository.isSessionUnlocked(packageName)) {
-                // In a real app, we would start the Lock Activity here
                 Log.i("ShieldAccessibility", "Locking app: $packageName")
+                val lockIntent = Intent(applicationContext, com.shieldcore.security.presentation.ui.AppLockActivity::class.java).apply {
+                    putExtra("target_package", packageName)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS
+                }
+                startActivity(lockIntent)
             }
         }
     }
@@ -51,12 +55,18 @@ class ShieldAccessibilityService : AccessibilityService() {
 
         urlNodes.forEach { node ->
             node.text?.toString()?.let { url ->
-                if (url.startsWith("http")) {
+                if (url.startsWith("http://") || url.startsWith("https://")) {
                     serviceScope.launch {
                         val result = phishingRepository.checkUrl(url)
                         if (result.isMalicious) {
                             Log.w("ShieldAccessibility", "Malicious URL detected: $url")
-                            // Show warning overlay or notification
+                            withContext(Dispatchers.Main) {
+                                android.widget.Toast.makeText(
+                                    applicationContext,
+                                    "⚠️ ShieldCore Security Warning: Malicious Phishing link detected ($url)",
+                                    android.widget.Toast.LENGTH_LONG
+                                ).show()
+                            }
                         }
                     }
                 }

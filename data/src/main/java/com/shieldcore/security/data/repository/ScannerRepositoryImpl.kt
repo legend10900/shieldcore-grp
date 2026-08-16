@@ -131,7 +131,16 @@ class ScannerRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun removeThreat(packageName: String): Boolean {
-        return true
+    override suspend fun removeThreat(packageName: String): Boolean = withContext(Dispatchers.Main) {
+        try {
+            val intent = android.content.Intent(android.content.Intent.ACTION_DELETE).apply {
+                data = android.net.Uri.parse("package:$packageName")
+                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 }

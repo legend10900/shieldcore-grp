@@ -25,8 +25,17 @@ class AppLockRepositoryImpl @Inject constructor(
 
     override fun getLockedApps(): Flow<List<LockedApp>> {
         return context.dataStore.data.map { prefs ->
+            val pm = context.packageManager
             val set = prefs[LOCKED_APPS_KEY] ?: emptySet()
-            set.map { LockedApp(it, it, true) }
+            set.map { pkg ->
+                val label = try {
+                    val appInfo = pm.getApplicationInfo(pkg, 0)
+                    pm.getApplicationLabel(appInfo).toString()
+                } catch (_: Exception) {
+                    pkg
+                }
+                LockedApp(pkg, label, true)
+            }
         }
     }
 

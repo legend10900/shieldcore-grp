@@ -13,6 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import java.io.File
 import java.util.*
 import javax.inject.Inject
@@ -26,44 +28,126 @@ class JunkCleanerRepositoryImpl @Inject constructor(
     override fun scanForJunk(): Flow<JunkScanProgress> = flow {
         emit(JunkScanProgress.Idle)
         val junkItems = mutableListOf<JunkItem>()
-        
-        val appCache = context.cacheDir
-        val cacheFiles = appCache.listFiles() ?: emptyArray()
-        val mappedCache = cacheFiles.map { 
-            JunkItem(UUID.randomUUID().toString(), it.name, it.length(), JunkType.CACHE, it.absolutePath)
-        }
-        junkItems.addAll(mappedCache)
-        emit(JunkScanProgress.Scanning("App Cache", mappedCache.sumOf { it.sizeBytes }))
+        var runningTotalSize = 0L
 
-        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        if (downloads.exists()) {
-            val tempFiles = FileUtils.findJunkFiles(downloads, setOf("tmp", "log", "temp"))
-            val mappedTemp = tempFiles.map { file ->
-                JunkItem(UUID.randomUUID().toString(), file.name, file.length(), JunkType.TEMP_FILES, file.absolutePath)
+        // 1. Scan Application Internal & External Caches
+        val internalCache = context.cacheDir
+        val codeCache = context.codeCacheDir
+        val externalCache = context.externalCacheDir
+
+        val cacheDirs = listOfNotNull(internalCache, codeCache, externalCache)
+        for (dir in cacheDirs) {
+            if (dir.exists()) {
+                val files = dir.listFiles() ?: emptyArray()
+                for (file in files) {
+                    val size = if (file.isDirectory) FileUtils.getFolderSize(file) else file.length()
+                    if (size > 0) {
+                        val item = JunkItem(
+                            id = UUID.randomUUID().toString(),
+                            label = file.name,
+                            sizeBytes = size,
+                            type = JunkType.CACHE,
+                            path = file.absolutePath
+                        )
+                        junkItems.add(item)
+                        runningTotalSize += size
+                    }
+                }
             }
-            junkItems.addAll(mappedTemp)
         }
-        
+        emit(JunkScanProgress.Scanning("Application Caches", runningTotalSize))
+        yield()
+
+        // 2. Scan Downloads & External Storage for Temp / Log / Backup Files
+        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        if (downloads != null && downloads.exists()) {
+            val tempExtensions = setOf("tmp", "temp", "log", "bak", "old", "dmp")
+            val tempFiles = FileUtils.findJunkFilesAsync(downloads, tempExtensions, setOf(".thumbnails"))
+            for (file in tempFiles) {
+                val size = if (file.isDirectory) FileUtils.getFolderSize(file) else file.length()
+                if (size > 0) {
+                    val item = JunkItem(
+                        id = UUID.randomUUID().toString(),
+                        label = file.name,
+                        sizeBytes = size,
+                        type = JunkType.TEMP_FILES,
+                        path = file.absolutePath
+                    )
+                    junkItems.add(item)
+                    runningTotalSize += size
+                }
+            }
+        }
+        emit(JunkScanProgress.Scanning("Temporary & Log Files", runningTotalSize))
+        yield()
+
+        // 3. Scan for Obsolete/Residual APK installers in Downloads
+        if (downloads != null && downloads.exists()) {
+            val apkFiles = downloads.listFiles { f -> f.isFile && f.extension.equals("apk", ignoreCase = true) } ?: emptyArray()
+            for (apk in apkFiles) {
+                val size = apk.length()
+                val item = JunkItem(
+                    id = UUID.randomUUID().toString(),
+                    label = "Residual APK: ${apk.name}",
+                    sizeBytes = size,
+                    type = JunkType.OBSOLETE_APK,
+                    path = apk.absolutePath
+                )
+                junkItems.add(item)
+                runningTotalSize += size
+            }
+        }
+        emit(JunkScanProgress.Scanning("Residual APK Installers", runningTotalSize))
+        yield()
+
+        // 4. Scan DCIM / Pictures .thumbnails cache
+        val dcimDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM)
+        if (dcimDir != null && dcimDir.exists()) {
+            val thumbDir = File(dcimDir, ".thumbnails")
+            if (thumbDir.exists()) {
+                val size = FileUtils.getFolderSize(thumbDir)
+                if (size > 0) {
+                    junkItems.add(JunkItem(
+                        id = UUID.randomUUID().toString(),
+                        label = "Gallery Thumbnail Cache",
+                        sizeBytes = size,
+                        type = JunkType.CACHE,
+                        path = thumbDir.absolutePath
+                    ))
+                    runningTotalSize += size
+                }
+            }
+        }
+
         emit(JunkScanProgress.Completed(junkItems))
     }.flowOn(Dispatchers.IO)
 
-    override suspend fun cleanJunk(items: List<JunkItem>): CleanSummary {
+    override suspend fun cleanJunk(items: List<JunkItem>): CleanSummary = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
         var totalCleaned = 0L
         var count = 0
 
         items.forEach { item ->
             val file = File(item.path)
-            if (FileUtils.deleteFileOrDirectory(file)) {
-                totalCleaned += item.sizeBytes
-                count++
+            if (file.exists()) {
+                val freed = FileUtils.deleteAndCalculateFreedBytes(file)
+                if (freed > 0 || !file.exists()) {
+                    totalCleaned += if (freed > 0) freed else item.sizeBytes
+                    count++
+                }
             }
         }
 
-        return CleanSummary(totalCleaned, count, System.currentTimeMillis() - startTime)
+        CleanSummary(totalCleaned, count, System.currentTimeMillis() - startTime)
     }
 
-    override suspend fun startAutomatedCacheClean() {
-        // Accessibility Service interaction placeholder
+    override suspend fun startAutomatedCacheClean() = withContext(Dispatchers.IO) {
+        val dirs = listOfNotNull(context.cacheDir, context.codeCacheDir, context.externalCacheDir)
+        for (dir in dirs) {
+            val files = dir.listFiles() ?: continue
+            for (f in files) {
+                FileUtils.deleteFileOrDirectory(f)
+            }
+        }
     }
 }

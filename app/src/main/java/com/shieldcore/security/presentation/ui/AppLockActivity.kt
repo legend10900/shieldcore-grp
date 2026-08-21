@@ -8,18 +8,23 @@ import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import androidx.biometric.BiometricPrompt
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -30,6 +35,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.shieldcore.security.core.utils.AppLockSecurityManager
 import com.shieldcore.security.domain.repository.AppLockRepository
+import com.shieldcore.security.presentation.ui.theme.*
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -68,19 +74,21 @@ class AppLockActivity : FragmentActivity() {
         })
 
         setContent {
-            AppLockScreenContent(
-                appName = appLabel,
-                onBiometricClick = { showBiometricPrompt() },
-                onPinSuccess = { unlockAndProceed() },
-                onCancelClick = {
-                    val homeIntent = Intent(Intent.ACTION_MAIN).apply {
-                        addCategory(Intent.CATEGORY_HOME)
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            ShieldCoreTheme {
+                AppLockScreenContent(
+                    appName = appLabel,
+                    onBiometricClick = { showBiometricPrompt() },
+                    onPinSuccess = { unlockAndProceed() },
+                    onCancelClick = {
+                        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                            addCategory(Intent.CATEGORY_HOME)
+                            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        }
+                        startActivity(homeIntent)
+                        finish()
                     }
-                    startActivity(homeIntent)
-                    finish()
-                }
-            )
+                )
+            }
         }
 
         showBiometricPrompt()
@@ -133,18 +141,12 @@ fun AppLockScreenContent(
     var enteredPin by remember { mutableStateOf("") }
     var isPinError by remember { mutableStateOf(false) }
 
-    val darkBg = Color(0xFF0F172A)
-    val cardBg = Color(0xFF1E293B)
-    val primaryCyan = Color(0xFF06B6D4)
+    val statusColor = if (isPinError) LaserRed else ElectricViolet
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(Color(0xFF0B0F19), Color(0xFF0F172A))
-                )
-            )
+            .background(DarkBackground)
             .padding(24.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -153,26 +155,28 @@ fun AppLockScreenContent(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.fillMaxWidth()
         ) {
-            // Lock Icon
-            Box(
-                modifier = Modifier
-                    .size(72.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF1E293B)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = null,
-                    tint = if (isPinError) MaterialTheme.colorScheme.error else primaryCyan,
-                    modifier = Modifier.size(36.dp)
-                )
-            }
+            // Lock Hero Orb
+            AnimatedPulseOrb(
+                accentColor = statusColor,
+                icon = Icons.Default.Lock,
+                size = 110.dp,
+                iconSize = 48.dp
+            )
 
-            Spacer(modifier = Modifier.height(16.dp))
-            Text("ShieldCore Locked", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                "ShieldCore Locked",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.ExtraBold,
+                color = TextPrimary
+            )
             Spacer(modifier = Modifier.height(4.dp))
-            Text(appName, style = MaterialTheme.typography.bodyMedium, color = Color.LightGray)
+            Text(
+                appName,
+                style = MaterialTheme.typography.titleMedium,
+                color = ElectricViolet,
+                fontWeight = FontWeight.SemiBold
+            )
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -183,15 +187,13 @@ fun AppLockScreenContent(
             ) {
                 for (i in 0 until 4) {
                     val isFilled = enteredPin.length > i
+                    val dotColor = if (isPinError) LaserRed else if (isFilled) ElectricViolet else DarkCardBorder
                     Box(
                         modifier = Modifier
                             .size(16.dp)
                             .clip(CircleShape)
-                            .background(
-                                if (isPinError) MaterialTheme.colorScheme.error
-                                else if (isFilled) primaryCyan
-                                else Color.DarkGray
-                            )
+                            .background(dotColor)
+                            .border(BorderStroke(1.dp, if (isFilled) NeonCyan else Color.Transparent), CircleShape)
                     )
                 }
             }
@@ -249,7 +251,7 @@ fun AppLockScreenContent(
             Spacer(modifier = Modifier.height(24.dp))
 
             TextButton(onClick = onCancelClick) {
-                Text("Exit to Home", color = Color.Gray, fontSize = 14.sp)
+                Text("Exit to Home", color = TextMuted, fontSize = 14.sp)
             }
         }
     }
@@ -257,18 +259,21 @@ fun AppLockScreenContent(
 
 @Composable
 fun KeypadButton(key: String, onClick: () -> Unit) {
-    Box(
+    Surface(
         modifier = Modifier
             .size(68.dp)
             .clip(CircleShape)
-            .background(Color(0xFF1E293B))
             .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
+        shape = CircleShape,
+        color = DarkCardSurface,
+        border = BorderStroke(1.dp, DarkCardBorder)
     ) {
-        when (key) {
-            "bio" -> Icon(Icons.Default.Fingerprint, contentDescription = "Biometrics", tint = Color(0xFF06B6D4), modifier = Modifier.size(28.dp))
-            "del" -> Icon(Icons.Default.Backspace, contentDescription = "Backspace", tint = Color.LightGray, modifier = Modifier.size(24.dp))
-            else -> Text(key, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Box(contentAlignment = Alignment.Center) {
+            when (key) {
+                "bio" -> Icon(Icons.Default.Fingerprint, contentDescription = "Biometrics", tint = ElectricViolet, modifier = Modifier.size(28.dp))
+                "del" -> Icon(Icons.AutoMirrored.Filled.Backspace, contentDescription = "Backspace", tint = TextSecondary, modifier = Modifier.size(22.dp))
+                else -> Text(key, color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            }
         }
     }
 }

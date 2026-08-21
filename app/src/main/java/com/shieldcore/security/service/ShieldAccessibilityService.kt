@@ -25,6 +25,8 @@ class ShieldAccessibilityService : AccessibilityService() {
     private var lastActiveLockedPkg: String? = null
     private var lastCheckedPkg: String? = null
     private var lastCheckTime: Long = 0L
+    private var lastAlertTime: Long = 0L
+    private var lastAlertedContent: String? = null
 
     private val ignoredPackages = setOf(
         "com.android.systemui",
@@ -43,7 +45,7 @@ class ShieldAccessibilityService : AccessibilityService() {
                 checkAppLock(packageName)
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                inspectUrlBar()
+                inspectScreenContent()
             }
         }
     }
@@ -81,24 +83,30 @@ class ShieldAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun inspectUrlBar() {
+    private fun inspectScreenContent() {
         val rootNode = rootInActiveWindow ?: return
-        val urlNodes = findUrlNodesRecursively(rootNode)
+        val textNodes = findTextNodesRecursively(rootNode)
 
-        urlNodes.forEach { node ->
-            node.text?.toString()?.let { url ->
-                if (url.startsWith("http://") || url.startsWith("https://")) {
-                    serviceScope.launch {
-                        val result = phishingRepository.checkUrl(url)
-                        if (result.isMalicious) {
-                            Log.w("ShieldAccessibility", "Malicious URL detected: $url")
-                            withContext(Dispatchers.Main) {
-                                android.widget.Toast.makeText(
-                                    applicationContext,
-                                    "⚠️ ShieldCore Security Warning: Malicious Phishing link detected ($url)",
-                                    android.widget.Toast.LENGTH_LONG
-                                ).show()
-                            }
+        textNodes.forEach { node ->
+            val text = node.text?.toString() ?: return@forEach
+            if (text.length < 10) return@forEach
+
+            val now = System.currentTimeMillis()
+            if (text == lastAlertedContent && now - lastAlertTime < 5000) return@forEach
+
+            // Check if text has URLs or contains high-risk scam triggers
+            if (text.contains("http://") || text.contains("https://") || text.contains("upi://pay") || text.contains("disconnected tonight") || text.contains("held due to")) {
+                serviceScope.launch(Dispatchers.IO) {
+                    val report = phishingRepository.analyzeMessage(text)
+                    if (report.isScam) {
+                        lastAlertTime = now
+                        lastAlertedContent = text
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                applicationContext,
+                                "⚠️ ShieldCore Warning: ${report.category.displayName} detected on screen!",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
                         }
                     }
                 }
@@ -106,14 +114,13 @@ class ShieldAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun findUrlNodesRecursively(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
+    private fun findTextNodesRecursively(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
         val found = mutableListOf<AccessibilityNodeInfo>()
-        if (node.className?.contains("EditText", ignoreCase = true) == true || 
-            node.contentDescription?.contains("url", ignoreCase = true) == true) {
+        if (!node.text.isNullOrBlank()) {
             found.add(node)
         }
         for (i in 0 until node.childCount) {
-            node.getChild(i)?.let { found.addAll(findUrlNodesRecursively(it)) }
+            node.getChild(i)?.let { found.addAll(findTextNodesRecursively(it)) }
         }
         return found
     }

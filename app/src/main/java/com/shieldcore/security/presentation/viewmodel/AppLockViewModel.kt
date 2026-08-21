@@ -37,35 +37,42 @@ class AppLockViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(AppLockUiState())
     val uiState: StateFlow<AppLockUiState> = _uiState.asStateFlow()
 
+    // In-memory cache of raw installed apps to avoid repeated expensive PackageManager calls
+    private var cachedRawApps: List<Pair<String, String>>? = null
+
     init {
         loadInstalledApps()
     }
 
     private fun loadInstalledApps() {
         viewModelScope.launch {
+            // First, load and cache installed package names and labels on background IO thread once
+            val rawApps = cachedRawApps ?: withContext(Dispatchers.IO) {
+                val pm = context.packageManager
+                val packages = pm.getInstalledPackages(0)
+                packages
+                    .filter {
+                        val isSelf = it.packageName == context.packageName
+                        val isSystem = it.applicationInfo != null &&
+                                (it.applicationInfo!!.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                        !isSelf && !isSystem
+                    }
+                    .map { pkg ->
+                        val name = pkg.applicationInfo?.loadLabel(pm)?.toString() ?: pkg.packageName
+                        Pair(pkg.packageName, name)
+                    }
+                    .sortedBy { it.second.lowercase() }
+            }.also { cachedRawApps = it }
+
             repository.getLockedApps().collectLatest { lockedList ->
                 val lockedPackages = lockedList.map { it.packageName }.toSet()
 
-                val apps = withContext(Dispatchers.IO) {
-                    val pm = context.packageManager
-                    val packages = pm.getInstalledPackages(0)
-
-                    packages
-                        .filter {
-                            val isSelf = it.packageName == context.packageName
-                            val isSystem = it.applicationInfo != null &&
-                                    (it.applicationInfo!!.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                            !isSelf && (!isSystem || lockedPackages.contains(it.packageName))
-                        }
-                        .map { pkg ->
-                            val name = pkg.applicationInfo?.loadLabel(pm)?.toString() ?: pkg.packageName
-                            AppLockableItem(
-                                packageName = pkg.packageName,
-                                appName = name,
-                                isLocked = lockedPackages.contains(pkg.packageName)
-                            )
-                        }
-                        .sortedBy { it.appName.lowercase() }
+                val apps = rawApps.map { (pkgName, appName) ->
+                    AppLockableItem(
+                        packageName = pkgName,
+                        appName = appName,
+                        isLocked = lockedPackages.contains(pkgName)
+                    )
                 }
 
                 _uiState.update { state ->
@@ -94,7 +101,18 @@ class AppLockViewModel @Inject constructor(
     }
 
     fun toggleAppLock(packageName: String, shouldLock: Boolean) {
-        viewModelScope.launch {
+        // Optimistic UI update for instant zero-lag response
+        _uiState.update { state ->
+            val updatedInstalled = state.installedApps.map {
+                if (it.packageName == packageName) it.copy(isLocked = shouldLock) else it
+            }
+            val updatedFiltered = state.filteredApps.map {
+                if (it.packageName == packageName) it.copy(isLocked = shouldLock) else it
+            }
+            state.copy(installedApps = updatedInstalled, filteredApps = updatedFiltered)
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
             repository.setAppLocked(packageName, shouldLock)
         }
     }

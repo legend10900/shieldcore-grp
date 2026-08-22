@@ -5,10 +5,13 @@ import android.content.Intent
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import com.shieldcore.security.domain.repository.PhishingRepository
+import android.widget.Toast
 import com.shieldcore.security.domain.repository.AppLockRepository
+import com.shieldcore.security.domain.repository.PhishingRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
+import java.util.Collections
+import java.util.LinkedHashMap
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -25,42 +28,60 @@ class ShieldAccessibilityService : AccessibilityService() {
     private var lastActiveLockedPkg: String? = null
     private var lastCheckedPkg: String? = null
     private var lastCheckTime: Long = 0L
+    private var lastContentInspectTime: Long = 0L
     private var lastAlertTime: Long = 0L
-    private var lastAlertedContent: String? = null
+    private var lastAlertCategory: String? = null
+
+    // LRU Cache for recently analyzed texts: textHash -> timestamp
+    private val analyzedTextCache = Collections.synchronizedMap(
+        object : LinkedHashMap<Int, Long>(64, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, Long>?): Boolean {
+                return size > 100
+            }
+        }
+    )
 
     private val ignoredPackages = setOf(
         "com.android.systemui",
         "com.google.android.inputmethod.latin",
         "com.samsung.android.honeyboard",
         "com.sec.android.inputmethod",
+        "com.touchtype.swiftkey",
+        "com.google.android.inputmethod.korean",
         "com.android.launcher",
         "com.google.android.apps.nexuslauncher",
-        "com.sec.android.app.launcher"
+        "com.sec.android.app.launcher",
+        "com.android.settings",
+        "com.google.android.dialer",
+        "com.samsung.android.dialer"
     )
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        val packageName = event.packageName?.toString() ?: return
+        if (packageName == this.packageName || ignoredPackages.contains(packageName)) return
+
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                val packageName = event.packageName?.toString() ?: return
                 checkAppLock(packageName)
             }
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
-                inspectScreenContent()
+                val now = System.currentTimeMillis()
+                // Throttle screen inspection to at most once per 1500ms
+                if (now - lastContentInspectTime >= 1500L) {
+                    lastContentInspectTime = now
+                    inspectScreenContent(packageName)
+                }
             }
         }
     }
 
     private fun checkAppLock(packageName: String) {
-        if (packageName == this.packageName) return
-
-        // When switching away from a previously active locked app, immediately clear its session unlock!
+        // When switching away from a previously active locked app, immediately clear its session unlock
         val prev = lastActiveLockedPkg
         if (prev != null && prev != packageName && !ignoredPackages.contains(packageName)) {
             appLockRepository.clearSessionUnlock(prev)
             lastActiveLockedPkg = null
         }
-
-        if (ignoredPackages.contains(packageName)) return
 
         val now = System.currentTimeMillis()
         if (packageName == lastCheckedPkg && now - lastCheckTime < 500) return
@@ -83,46 +104,90 @@ class ShieldAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun inspectScreenContent() {
+    private fun inspectScreenContent(packageName: String) {
         val rootNode = rootInActiveWindow ?: return
-        val textNodes = findTextNodesRecursively(rootNode)
 
-        textNodes.forEach { node ->
-            val text = node.text?.toString() ?: return@forEach
-            if (text.length < 10) return@forEach
+        // Extract text elements safely on a background worker to avoid any UI thread jank
+        serviceScope.launch(Dispatchers.Default) {
+            val extractedTexts = mutableListOf<String>()
+            try {
+                collectTextNodes(rootNode, extractedTexts, depth = 0, maxNodes = 25)
+            } finally {
+                @Suppress("DEPRECATION")
+                rootNode.recycle()
+            }
+
+            if (extractedTexts.isEmpty()) return@launch
 
             val now = System.currentTimeMillis()
-            if (text == lastAlertedContent && now - lastAlertTime < 5000) return@forEach
 
-            // Check if text has URLs or contains high-risk scam triggers
-            if (text.contains("http://") || text.contains("https://") || text.contains("upi://pay") || text.contains("disconnected tonight") || text.contains("held due to")) {
-                serviceScope.launch(Dispatchers.IO) {
-                    val report = phishingRepository.analyzeMessage(text)
-                    if (report.isScam) {
+            for (text in extractedTexts) {
+                if (text.length < 15) continue
+
+                // Check triggers: URLs, UPI links, or suspicious keywords
+                val hasLink = text.contains("http://", ignoreCase = true) ||
+                              text.contains("https://", ignoreCase = true) ||
+                              text.contains("upi://pay", ignoreCase = true) ||
+                              text.contains("t.me/", ignoreCase = true) ||
+                              text.contains("bit.ly/", ignoreCase = true)
+
+                val hasUrgentThreat = text.contains("disconnected tonight", ignoreCase = true) ||
+                                     text.contains("account blocked", ignoreCase = true) ||
+                                     text.contains("kyc expired", ignoreCase = true) ||
+                                     text.contains("held at facility", ignoreCase = true)
+
+                if (!hasLink && !hasUrgentThreat) continue
+
+                val textHash = text.hashCode()
+                val lastSeenTime = analyzedTextCache[textHash]
+                // Skip if this exact text was inspected within the last 60 seconds
+                if (lastSeenTime != null && (now - lastSeenTime) < 60_000L) {
+                    continue
+                }
+                analyzedTextCache[textHash] = now
+
+                val report = phishingRepository.analyzeMessage(text)
+                if (report.isScam) {
+                    // Suppress duplicate alert toasts within 10 seconds for the same category
+                    if (now - lastAlertTime > 10_000L || lastAlertCategory != report.category.displayName) {
                         lastAlertTime = now
-                        lastAlertedContent = text
+                        lastAlertCategory = report.category.displayName
                         withContext(Dispatchers.Main) {
-                            android.widget.Toast.makeText(
+                            Toast.makeText(
                                 applicationContext,
                                 "⚠️ ShieldCore Warning: ${report.category.displayName} detected on screen!",
-                                android.widget.Toast.LENGTH_LONG
+                                Toast.LENGTH_LONG
                             ).show()
                         }
                     }
+                    break // Don't process further nodes in this tick once a high-risk scam is detected
                 }
             }
         }
     }
 
-    private fun findTextNodesRecursively(node: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
-        val found = mutableListOf<AccessibilityNodeInfo>()
-        if (!node.text.isNullOrBlank()) {
-            found.add(node)
+    private fun collectTextNodes(node: AccessibilityNodeInfo?, outList: MutableList<String>, depth: Int, maxNodes: Int) {
+        if (node == null || depth > 6 || outList.size >= maxNodes) return
+
+        val text = node.text?.toString()?.trim()
+        if (!text.isNullOrBlank() && text.length >= 10) {
+            outList.add(text)
         }
-        for (i in 0 until node.childCount) {
-            node.getChild(i)?.let { found.addAll(findTextNodesRecursively(it)) }
+
+        val childCount = node.childCount
+        for (i in 0 until childCount) {
+            if (outList.size >= maxNodes) break
+            val child = try {
+                node.getChild(i)
+            } catch (_: Exception) {
+                null
+            }
+            if (child != null) {
+                collectTextNodes(child, outList, depth + 1, maxNodes)
+                @Suppress("DEPRECATION")
+                child.recycle()
+            }
         }
-        return found
     }
 
     override fun onInterrupt() {}

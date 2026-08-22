@@ -86,7 +86,7 @@ class PhishingViewModel @Inject constructor(
         val (text, sender) = when (templateType) {
             "FAKE_DELIVERY" -> Pair(
                 "India Post: Your package #IN98273 is held at sorting facility due to incorrect house number. Update your delivery address within 24h at https://indiapost-tracking.xyz/pay or package will be returned to sender.",
-                "VM-INDPOST"
+                "+919876543210"
             )
             "UPI_CASHBACK" -> Pair(
                 "Congratulations! You have received Rs 2,500 cashback on your last transaction. Click here to receive money in your account: upi://pay?pa=refund.cashback.support@okaxis&pn=CashbackDepartment&am=2500&tn=ClaimRefund",
@@ -98,11 +98,15 @@ class PhishingViewModel @Inject constructor(
             )
             "BANK_KYC" -> Pair(
                 "SBI Alert: Your NetBanking account will be blocked today due to pending PAN card verification. Please complete your KYC immediately at https://sbi-yono-kyc.com to avoid account freeze.",
-                "BZ-SBIBNK"
+                "+919876500000"
             )
-            "LEGITIMATE" -> Pair(
-                "Your Amazon order #402-8829102-19283 for 'Noise Pulse Smartwatch' has been dispatched and will be delivered tomorrow by 8 PM.",
-                "AX-AMAZON"
+            "GENUINE_BANK" -> Pair(
+                "HDFC Bank: Rs 2,450.00 debited from a/c **4920 on 22-AUG-26 at AMAZON RETAIL. Avail Bal: Rs 54,200.00. If not done by you, call 18002026161.",
+                "AD-HDFCBK"
+            )
+            "GENUINE_DELIVERY" -> Pair(
+                "Your India Post SpeedPost article #EK829381928IN has been dispatched. Track your delivery at https://www.indiapost.gov.in/track",
+                "VK-INDPOST"
             )
             else -> Pair("", "")
         }

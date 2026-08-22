@@ -264,7 +264,8 @@ fun PhishingScreen(
                         ScamPresetChip("💳 UPI Cashback Trap", LaserRed) { viewModel.loadScamTemplate("UPI_CASHBACK") }
                         ScamPresetChip("⚡ Electricity Cutoff", LaserRed) { viewModel.loadScamTemplate("ELECTRICITY_CUTOFF") }
                         ScamPresetChip("🏦 Bank KYC Freeze", LaserRed) { viewModel.loadScamTemplate("BANK_KYC") }
-                        ScamPresetChip("✅ Genuine Order", MatrixGreen) { viewModel.loadScamTemplate("LEGITIMATE") }
+                        ScamPresetChip("✅ Genuine Bank SMS", MatrixGreen) { viewModel.loadScamTemplate("GENUINE_BANK") }
+                        ScamPresetChip("✅ Official Delivery", MatrixGreen) { viewModel.loadScamTemplate("GENUINE_DELIVERY") }
                     }
                 }
             }

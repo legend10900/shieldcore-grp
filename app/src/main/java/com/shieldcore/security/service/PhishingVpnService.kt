@@ -35,6 +35,7 @@ class PhishingVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var isRunning = false
+    private val domainVerdictCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
     companion object {
         const val ACTION_START = "com.shieldcore.security.action.START_VPN"
@@ -136,9 +137,15 @@ class PhishingVpnService : VpnService() {
 
                                     var isBlocked = false
                                     if (domain != null) {
-                                        val checkResult = phishingRepository.checkUrl("https://$domain")
-                                        if (checkResult.isMalicious) {
-                                            isBlocked = true
+                                        val cached = domainVerdictCache[domain]
+                                        if (cached != null) {
+                                            isBlocked = cached
+                                        } else {
+                                            val checkResult = phishingRepository.checkUrl("https://$domain")
+                                            isBlocked = checkResult.isMalicious
+                                            domainVerdictCache[domain] = isBlocked
+                                        }
+                                        if (isBlocked) {
                                             Log.w("PhishingVpnService", "Sinkholing malicious domain: $domain")
                                         }
                                     }
